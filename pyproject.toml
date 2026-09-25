@@ -1,0 +1,68 @@
+[project]
+name = "mallm"
+version = "0.1.0"
+description = "Mathematical large language model from scratch"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[tool.uv]
+package = false
+default-groups = ["web", "dev"]
+
+[dependency-groups]
+web = [
+    "fastapi>=0.141.1",
+    "psycopg[binary]>=3.2",
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+    "uvicorn>=0.54.0",
+]
+dev = [
+    "httpx2>=2.13.1",
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.9",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "N",   # pep8-naming
+    "RUF", # ruff-specific
+    "BLE", # flake8-blind-except: запрещает except Exception без уважительной причины
+    "ANN", # flake8-annotations
+]
+ignore = [
+    "RUF001", # кириллические строки — ложные срабатывания
+    "RUF002", # кириллические docstring — ложные срабатывания
+    "RUF003", # кириллические комментарии — ложные срабатывания
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+skip-magic-trailing-comma = false
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["src"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90
