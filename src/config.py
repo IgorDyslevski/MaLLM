@@ -13,7 +13,6 @@ type Environment = Literal["development", "staging", "production"]
 
 class AppSettings(BaseModel):
     name: str = "Mallm"
-    version: str = "0.1.0"
     description: str = "Mathematical large language model from scratch"
 
 
