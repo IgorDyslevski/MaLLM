@@ -1,12 +1,7 @@
 from typing import Literal
 
 from pydantic import BaseModel, Field
-from pydantic_settings import (
-    BaseSettings,
-    PydanticBaseSettingsSource,
-    SettingsConfigDict,
-    YamlConfigSettingsSource,
-)
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 type Environment = Literal["development", "staging", "production"]
 
@@ -25,23 +20,10 @@ class DatabaseSettings(BaseModel):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        yaml_file="config.yaml", env_nested_delimiter="__"
-    )
+    model_config = SettingsConfigDict(env_nested_delimiter="__")
 
     log_level: str = "INFO"
     environment: str = "development"
 
     app: AppSettings = Field(default_factory=AppSettings)
     database: DatabaseSettings
-
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        return (init_settings, env_settings, YamlConfigSettingsSource(settings_cls))

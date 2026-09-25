@@ -12,7 +12,6 @@
 .vscode
 .env
 .env.*
-config.yaml
 logs
 *.log
 dist
