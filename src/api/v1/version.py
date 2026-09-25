@@ -6,5 +6,5 @@ version_router = APIRouter(tags=["Version"])
 
 
 @version_router.get("/version")
-def application_version(request: Request) -> VersionResponse:
+async def application_version(request: Request) -> VersionResponse:
     return VersionResponse(version=request.app.version)

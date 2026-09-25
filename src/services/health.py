@@ -9,44 +9,42 @@ from src.schemas import ComponentHealth, DependencyHealthResponse
 
 logger = logging.getLogger(__name__)
 
+PROBE_TIMEOUT_SECONDS = 3
+
 
 async def postgres_version(settings: DatabaseSettings) -> str:
-    """Получить версию PostgreSQL с работающего сервера."""
+    """Получить версию PostgreSQL запросом к работающему серверу."""
     async with await AsyncConnection.connect(
         host=settings.host,
         port=settings.port,
         user=settings.username,
         password=settings.password,
         dbname=settings.database_name,
-        connect_timeout=3,
     ) as connection:
         cursor = await connection.execute("SHOW server_version")
         row = await cursor.fetchone()
-        if row is None:
-            raise ValueError("PostgreSQL did not return a server version")
-        return str(row[0])
+    assert row is not None
+    return str(row[0])
 
 
 async def health_report(settings: DatabaseSettings) -> DependencyHealthResponse:
     """Проверить PostgreSQL и измерить время полного обращения."""
     started = perf_counter()
+    version: str | None = None
     try:
-        version = await asyncio.wait_for(postgres_version(settings), timeout=3)
-    except (Error, OSError, TimeoutError, ValueError):
+        version = await asyncio.wait_for(
+            postgres_version(settings), timeout=PROBE_TIMEOUT_SECONDS
+        )
+    except (Error, TimeoutError):
         logger.exception("PostgreSQL health check failed")
-        component = ComponentHealth(
-            status="error",
-            message="PostgreSQL is unavailable",
-            response_time_ms=(perf_counter() - started) * 1000,
-        )
-    else:
-        component = ComponentHealth(
-            status="ok",
-            message="PostgreSQL is available",
-            version=version,
-            response_time_ms=(perf_counter() - started) * 1000,
-        )
+    available = version is not None
+    component = ComponentHealth(
+        status="ok" if available else "error",
+        message="PostgreSQL is available" if available else "PostgreSQL is unavailable",
+        version=version,
+        response_time_ms=round((perf_counter() - started) * 1000, 2),
+    )
     return DependencyHealthResponse(
-        status="ok" if component.status == "ok" else "degraded",
+        status="ok" if available else "degraded",
         components={"postgres": component},
     )

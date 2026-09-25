@@ -19,8 +19,8 @@ class AppSettings(BaseModel):
 class DatabaseSettings(BaseModel):
     host: str = "localhost"
     port: int = 5432
-    username: str = "user"
-    password: str = "password"
+    username: str
+    password: str
     database_name: str = "mallm_db"
 
 
@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     app: AppSettings = Field(default_factory=AppSettings)
-    database: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    database: DatabaseSettings
 
     @classmethod
     def settings_customise_sources(

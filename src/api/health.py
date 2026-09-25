@@ -6,5 +6,5 @@ health_router = APIRouter(tags=["Health"])
 
 
 @health_router.get("/healthz")
-def health_check() -> HealthResponse:
+async def health_check() -> HealthResponse:
     return HealthResponse(status="ok")

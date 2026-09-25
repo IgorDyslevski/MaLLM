@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Iterator
 
 import pytest
@@ -30,7 +31,7 @@ def test_healthz_rejects_post_request(client: TestClient) -> None:
 
 
 def test_health_check_returns_health_response() -> None:
-    assert health_check() == HealthResponse(status="ok")
+    assert asyncio.run(health_check()) == HealthResponse(status="ok")
 
 
 def test_health_response_defaults_to_ok() -> None:

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from psycopg import OperationalError
+from psycopg.errors import ConnectionTimeout
 from pydantic import ValidationError
 
 from src.api.v1.health import database_settings
@@ -15,7 +16,7 @@ from src.services.health import health_report, postgres_version
 
 @pytest.fixture
 def settings() -> DatabaseSettings:
-    return DatabaseSettings()
+    return DatabaseSettings(username="test-user", password="test-password")
 
 
 @pytest.fixture
@@ -50,7 +51,7 @@ def test_health_reports_server_version_and_response_time(
     probe.assert_awaited_once_with(settings)
 
 
-@pytest.mark.parametrize("error", [OperationalError, OSError, TimeoutError, ValueError])
+@pytest.mark.parametrize("error", [OperationalError, ConnectionTimeout, TimeoutError])
 def test_health_degraded_when_postgres_unavailable(
     client: TestClient, error: type[Exception]
 ) -> None:
@@ -68,18 +69,21 @@ def test_health_degraded_when_postgres_unavailable(
     assert "secret" not in response.text
 
 
-def test_health_report_limits_probe_to_three_seconds(
+def test_health_report_degraded_when_probe_hangs(
     settings: DatabaseSettings,
 ) -> None:
-    with patch(
-        "src.services.health.asyncio.wait_for", side_effect=TimeoutError
-    ) as wait:
+    async def hang(_: DatabaseSettings) -> str:
+        await asyncio.sleep(60)
+        return "16.4"
+
+    with (
+        patch("src.services.health.postgres_version", hang),
+        patch("src.services.health.PROBE_TIMEOUT_SECONDS", 0.01),
+    ):
         report = asyncio.run(health_report(settings))
 
-    wait.assert_called_once()
-    assert wait.call_args.kwargs == {"timeout": 3}
-    wait.call_args.args[0].close()
     assert report.status == "degraded"
+    assert report.components["postgres"].message == "PostgreSQL is unavailable"
 
 
 def test_health_report_measures_complete_probe_duration(
@@ -112,21 +116,9 @@ def test_postgres_version_queries_running_server_and_closes_connection(
         user=settings.username,
         password=settings.password,
         dbname=settings.database_name,
-        connect_timeout=3,
     )
     connection.execute.assert_awaited_once_with("SHOW server_version")
     connection.__aexit__.assert_awaited_once()
-
-
-def test_postgres_version_rejects_missing_server_version(
-    settings: DatabaseSettings,
-) -> None:
-    connection = AsyncMock()
-    connection.__aenter__.return_value = connection
-    connection.execute.return_value.fetchone.return_value = None
-    with patch("src.services.health.AsyncConnection.connect", return_value=connection):
-        with pytest.raises(ValueError, match="did not return a server version"):
-            asyncio.run(postgres_version(settings))
 
 
 def test_component_health_rejects_negative_response_time() -> None:
