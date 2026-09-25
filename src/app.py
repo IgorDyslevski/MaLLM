@@ -1,12 +1,8 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI
 
-from src.config import Settings
 from src.api import v1_router
+from src.config import Settings
 
-router = APIRouter()
-@router.get("/health")
-def health_check() -> dict[str, str]:
-    return {"health": "ok"}
 
 def create_app() -> FastAPI:
     settings = Settings()
@@ -15,6 +11,7 @@ def create_app() -> FastAPI:
         version=settings.app.version,
         description=settings.app.description,
     )
+
     app.include_router(v1_router)
     return app
 

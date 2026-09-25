@@ -3,12 +3,13 @@ from typing import Literal
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-type HealthHealth = Literal["ok", "error"]
+type HealthStatus = Literal["ok", "error"]
+
 class HealthResponse(BaseModel):
-    Health: Literal["ok", "error"] = "ok"
+    status: HealthStatus = "ok"
 
-router = APIRouter(tags=["HealthHealth"])
+router = APIRouter(tags=["Health"])
 
-@router.get("/Health")
-def Health_check() -> HealthResponse:
-    return HealthResponse(Health="ok")
+@router.get("/health")
+def health_check() -> HealthResponse:
+    return HealthResponse(status="ok")
