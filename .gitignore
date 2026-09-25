@@ -17,6 +17,7 @@ config.yaml
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.coverage
 coverage.xml
 htmlcov/
 

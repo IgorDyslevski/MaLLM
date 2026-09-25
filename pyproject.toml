@@ -4,22 +4,25 @@ version = "0.1.0"
 description = "Mathematical large language model from scratch"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = [
+dependencies = []
+
+[tool.uv]
+package = false
+default-groups = ["web", "dev"]
+
+[dependency-groups]
+web = [
     "fastapi>=0.141.1",
     "psycopg[binary]>=3.2",
     "pydantic>=2.13.5",
     "pydantic-settings[yaml]>=2.15.0",
-    "typing>=3.10.0.0",
     "uvicorn>=0.54.0",
 ]
-
-[tool.uv]
-package = false
-
-[dependency-groups]
 dev = [
     "httpx2>=2.13.1",
+    "pre-commit>=4.6.2",
     "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
     "ruff>=0.16.9",
 ]
 
@@ -56,3 +59,10 @@ docstring-code-line-length = "dynamic"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["src"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90
