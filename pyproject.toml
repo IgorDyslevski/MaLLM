@@ -17,6 +17,8 @@ package = false
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.13.1",
+    "pytest>=9.1.1",
     "ruff>=0.16.9",
 ]
 
@@ -49,3 +51,7 @@ line-ending = "auto"
 skip-magic-trailing-comma = false
 docstring-code-format = true
 docstring-code-line-length = "dynamic"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
