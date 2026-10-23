@@ -73,8 +73,110 @@ services:
       - mallm-network
     restart: unless-stopped
 
+  mlflow-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: ${MLFLOW_POSTGRES_PASSWORD:?set MLFLOW_POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: mlflow
+    volumes:
+      - mlflow-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - mallm-network
+    restart: unless-stopped
+
+  rustfs:
+    image: rustfs/rustfs@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-mlflow}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?set RUSTFS_SECRET_KEY in .env}
+    volumes:
+      - mlflow-artifacts:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - mallm-network
+    restart: unless-stopped
+
+  artifact-store-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    environment:
+      AWS_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY:-mlflow}
+      AWS_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:?set RUSTFS_SECRET_KEY in .env}
+    command:
+      - uv
+      - run
+      - --no-sync
+      - python
+      - -c
+      - |
+        import boto3
+        client = boto3.client("s3", endpoint_url="http://rustfs:9000", region_name="us-east-1")
+        if "mlflow-artifacts" not in {bucket["Name"] for bucket in client.list_buckets()["Buckets"]}:
+            client.create_bucket(Bucket="mlflow-artifacts")
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    networks:
+      - mallm-network
+    restart: "no"
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://mlflow@mlflow-postgres:5432/mlflow
+      PGPASSWORD: ${MLFLOW_POSTGRES_PASSWORD:?set MLFLOW_POSTGRES_PASSWORD in .env}
+      MLFLOW_S3_ENDPOINT_URL: http://rustfs:9000
+      AWS_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY:-mlflow}
+      AWS_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:?set RUSTFS_SECRET_KEY in .env}
+      MLFLOW_TRACKING_URI: http://localhost:5000
+    command:
+      - mlflow
+      - server
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --serve-artifacts
+      - --artifacts-destination
+      - s3://mlflow-artifacts
+      - --allowed-hosts
+      - localhost:*,127.0.0.1:*,mlflow:5000
+    ports:
+      - "127.0.0.1:5000:5000"
+    depends_on:
+      mlflow-postgres:
+        condition: service_healthy
+      artifact-store-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "uv", "run", "--no-sync", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      - mallm-network
+    restart: unless-stopped
+
 volumes:
   postgres-data:
+  mlflow-postgres-data:
+  mlflow-artifacts:
 
 networks:
   mallm-network:

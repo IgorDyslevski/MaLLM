@@ -1,0 +1,30 @@
+FROM python:3.13-slim AS builder
+
+COPY --from=ghcr.io/astral-sh/uv:0.12.19 /uv /usr/local/bin/uv
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=0
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-default-groups --group tracking
+
+FROM python:3.13-slim
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    UV_CACHE_DIR=/tmp/uv-cache
+
+RUN useradd --system --create-home mlflow
+
+WORKDIR /app
+
+COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
+COPY --from=builder /app/.venv ./.venv
+COPY pyproject.toml uv.lock ./
+
+USER mlflow
+
+EXPOSE 5000

@@ -26,6 +26,12 @@ dev = [
     "ruff>=0.16.9",
 ]
 
+tracking = [
+    "boto3>=1.43.118",
+    "mlflow>=3.17.2",
+    "psycopg2-binary>=2.9.13",
+]
+
 [tool.ruff]
 target-version = "py313"
 line-length = 88
