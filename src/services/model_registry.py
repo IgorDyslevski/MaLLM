@@ -7,7 +7,7 @@ import mlflow.pyfunc
 import pandas as pd
 from mlflow.artifacts import download_artifacts
 from mlflow.models import ModelSignature
-from mlflow.pyfunc import PythonModelContext
+from mlflow.pyfunc import PyFuncModel, PythonModelContext
 from mlflow.tracking import MlflowClient
 from mlflow.types import ColSpec, Schema
 
@@ -21,6 +21,7 @@ from src.schemas import (
     RegistryConfig,
     RegistryResult,
 )
+from src.services.inference import process
 from src.services.registered_model import RegisteredLanguageModel
 
 
@@ -116,10 +117,8 @@ def register_version(
     )
 
 
-def predict_registered_model(
-    client: MlflowClient, model_uri: str, request: GenerationRequest
-) -> GenerationResult:
-    """Загрузить модель по версии или alias и продолжить текст."""
+def load_registered_model(client: MlflowClient, model_uri: str) -> PyFuncModel:
+    """Загрузить модель по версии или alias через заданный MLflow-клиент."""
     if not model_uri.startswith("models:/"):
         raise ValueError("Ожидается URI models:/name/version или models:/name@alias")
     selection = model_uri.removeprefix("models:/")
@@ -136,9 +135,14 @@ def predict_registered_model(
             tracking_uri=client.tracking_uri,
             registry_uri=client.tracking_uri,
         )
-        model = mlflow.pyfunc.load_model(local)
-        prediction = model.predict(pd.DataFrame([request.model_dump()]))
-    return GenerationResult.model_validate(prediction.iloc[0].to_dict())
+        return mlflow.pyfunc.load_model(local)
+
+
+def predict_registered_model(
+    client: MlflowClient, model_uri: str, request: GenerationRequest
+) -> GenerationResult:
+    """Загрузить модель по версии или alias и продолжить текст."""
+    return process(request, load_registered_model(client, model_uri))
 
 
 def verify_alias(

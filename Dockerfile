@@ -9,7 +9,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-default-groups --group web
+RUN uv sync --locked --no-default-groups --group web --group training
 
 FROM python:3.13-slim
 

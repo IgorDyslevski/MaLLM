@@ -171,6 +171,11 @@ class GenerationResult(BaseModel):
     text: str
 
 
+class InferenceErrorResponse(BaseModel):
+    status: Literal["inference_error"] = "inference_error"
+    message: str = "Model inference failed"
+
+
 class RegistryConfig(BaseModel):
     name: str = Field(default="MaLLM", pattern=r"^[A-Za-z][A-Za-z0-9_.-]*$")
     results_file: Path = Path("artifacts/experiments/results.json")

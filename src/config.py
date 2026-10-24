@@ -19,6 +19,11 @@ class DatabaseSettings(BaseModel):
     database_name: str = "mallm_db"
 
 
+class InferenceSettings(BaseModel):
+    tracking_uri: str = Field(default="http://127.0.0.1:5000", min_length=1)
+    model_uri: str = Field(default="models:/MaLLM@champion", min_length=1)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_nested_delimiter="__")
 
@@ -27,3 +32,4 @@ class Settings(BaseSettings):
 
     app: AppSettings = Field(default_factory=AppSettings)
     database: DatabaseSettings
+    inference: InferenceSettings = Field(default_factory=InferenceSettings)

@@ -1,7 +1,6 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: mallm-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -23,54 +22,33 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 512M
-        reservations:
-          cpus: "0.25"
-          memory: 256M
-    networks:
-      - mallm-network
     restart: unless-stopped
 
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: mallm-app
+    build: .
     environment:
       DATABASE__HOST: postgres
-      DATABASE__PORT: "5432"
       DATABASE__USERNAME: ${POSTGRES_USER:-postgres}
       DATABASE__PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       DATABASE__DATABASE_NAME: ${POSTGRES_DB:-mallm}
       LOG_LEVEL: INFO
-      ENVIRONMENT: development
+      INFERENCE__TRACKING_URI: http://mlflow:5000
+      INFERENCE__MODEL_URI: ${MLFLOW_MODEL_URI:-models:/MaLLM@champion}
+      MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR: "false"
+      MLFLOW_DISABLE_AGENT_HINT: "true"
+      OMP_NUM_THREADS: "1"
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+      mlflow:
+        condition: service_healthy
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-    networks:
-      - mallm-network
     restart: unless-stopped
 
   mlflow-postgres:
@@ -87,8 +65,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    networks:
-      - mallm-network
     restart: unless-stopped
 
   rustfs:
@@ -104,8 +80,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    networks:
-      - mallm-network
     restart: unless-stopped
 
   artifact-store-init:
@@ -129,9 +103,6 @@ services:
     depends_on:
       rustfs:
         condition: service_healthy
-    networks:
-      - mallm-network
-    restart: "no"
 
   mlflow:
     build:
@@ -143,7 +114,6 @@ services:
       MLFLOW_S3_ENDPOINT_URL: http://rustfs:9000
       AWS_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY:-mlflow}
       AWS_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:?set RUSTFS_SECRET_KEY in .env}
-      MLFLOW_TRACKING_URI: http://localhost:5000
     command:
       - mlflow
       - server
@@ -169,15 +139,9 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
-    networks:
-      - mallm-network
     restart: unless-stopped
 
 volumes:
   postgres-data:
   mlflow-postgres-data:
   mlflow-artifacts:
-
-networks:
-  mallm-network:
-    driver: bridge
