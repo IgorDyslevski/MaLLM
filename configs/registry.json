@@ -1,0 +1,12 @@
+{
+  "name": "MaLLM",
+  "results_file": "artifacts/experiments/results.json",
+  "champion_run": "baseline",
+  "candidate_run": "compact-2-layers",
+  "demo_alias": "demo",
+  "example": {
+    "prompt": "What is 2 + 2?\n",
+    "max_new_tokens": 8,
+    "seed": 42
+  }
+}

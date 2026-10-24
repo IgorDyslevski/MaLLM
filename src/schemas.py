@@ -155,3 +155,59 @@ class ExperimentResult(BaseModel):
     training_rows: int = Field(gt=0)
     validation_rows: int = Field(gt=0)
     runs: list[ExperimentRunResult]
+
+
+class TokenizerConfig(BaseModel):
+    chars: list[str] = Field(min_length=2)
+
+
+class GenerationRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+    max_new_tokens: int = Field(default=32, ge=1, le=1024)
+    seed: int = Field(default=42, ge=0)
+
+
+class GenerationResult(BaseModel):
+    text: str
+
+
+class RegistryConfig(BaseModel):
+    name: str = Field(default="MaLLM", pattern=r"^[A-Za-z][A-Za-z0-9_.-]*$")
+    results_file: Path = Path("artifacts/experiments/results.json")
+    champion_run: str = "baseline"
+    candidate_run: str = "compact-2-layers"
+    demo_alias: str = Field(default="demo", pattern=r"^[a-z][a-z0-9_-]*$")
+    example: GenerationRequest = Field(
+        default_factory=lambda: GenerationRequest(
+            prompt="What is 2 + 2?\n", max_new_tokens=8
+        )
+    )
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> Self:
+        if self.champion_run == self.candidate_run:
+            raise ValueError("Для демонстрации версий нужны два разных Run")
+        if self.demo_alias in {"champion", "candidate"}:
+            raise ValueError("Демонстрационный alias должен отличаться от рабочих")
+        return self
+
+
+class RegisteredVersion(BaseModel):
+    version: str
+    run_id: str
+    variant: str
+    model_uri: str
+
+
+class AliasCheck(BaseModel):
+    alias: str
+    version: str
+    model_uri: str
+    prediction: str
+
+
+class RegistryResult(BaseModel):
+    name: str
+    champion: RegisteredVersion
+    candidate: RegisteredVersion
+    checks: list[AliasCheck]
