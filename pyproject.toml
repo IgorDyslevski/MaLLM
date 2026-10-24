@@ -19,16 +19,17 @@ web = [
     "uvicorn>=0.54.0",
 ]
 dev = [
+    {include-group = "tracking"},
     "httpx2>=2.13.1",
     "pre-commit>=4.6.2",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.16.9",
 ]
-
 tracking = [
     "boto3>=1.43.118",
     "mlflow>=3.17.2",
+    "pandas>=3.1.0",
     "psycopg2-binary>=2.9.13",
 ]
 

@@ -1259,8 +1259,12 @@ source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [
+    { name = "boto3" },
     { name = "httpx2" },
+    { name = "mlflow" },
+    { name = "pandas" },
     { name = "pre-commit" },
+    { name = "psycopg2-binary" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -1268,6 +1272,7 @@ dev = [
 tracking = [
     { name = "boto3" },
     { name = "mlflow" },
+    { name = "pandas" },
     { name = "psycopg2-binary" },
 ]
 web = [
@@ -1282,8 +1287,12 @@ web = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "boto3", specifier = ">=1.43.118" },
     { name = "httpx2", specifier = ">=2.13.1" },
+    { name = "mlflow", specifier = ">=3.17.2" },
+    { name = "pandas", specifier = ">=3.1.0" },
     { name = "pre-commit", specifier = ">=4.6.2" },
+    { name = "psycopg2-binary", specifier = ">=2.9.13" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.16.9" },
@@ -1291,6 +1300,7 @@ dev = [
 tracking = [
     { name = "boto3", specifier = ">=1.43.118" },
     { name = "mlflow", specifier = ">=3.17.2" },
+    { name = "pandas", specifier = ">=3.1.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.13" },
 ]
 web = [

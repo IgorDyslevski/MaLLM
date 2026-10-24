@@ -1,0 +1,9 @@
+{
+  "name": "nkthebass/math-synth-400k",
+  "revision": "244eefa71bdd5329919a840c55428ecea4da0d30",
+  "source": "https://huggingface.co/datasets/nkthebass/math-synth-400k/resolve/244eefa71bdd5329919a840c55428ecea4da0d30/data.jsonl",
+  "sha256": "591b6ec6e04c5e9324b3df64bc9bc26a84ed28b0ecf1575710e926fde616cca0",
+  "expected_rows": 400000,
+  "split": "train",
+  "path": "data/math-synth-400k/data.jsonl"
+}
