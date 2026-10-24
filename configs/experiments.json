@@ -1,0 +1,34 @@
+{
+  "experiment_name": "mallm-transformer-comparison",
+  "dataset_manifest": "configs/math-synth-400k.json",
+  "training": {
+    "seed": 42,
+    "max_records": 20000,
+    "validation_fraction": 0.1,
+    "steps": 500,
+    "batch_size": 16,
+    "eval_interval": 100,
+    "eval_batches": 20,
+    "final_eval_batches": 100
+  },
+  "runs": [
+    {
+      "name": "baseline",
+      "description": "Transformer из ноутбука: 4 блока, контекст 128, learning rate 1e-3",
+      "model": {"n_layer": 4},
+      "learning_rate": 0.001
+    },
+    {
+      "name": "compact-2-layers",
+      "description": "Проверить влияние глубины: 2 блока при остальных параметрах baseline",
+      "model": {"n_layer": 2},
+      "learning_rate": 0.001
+    },
+    {
+      "name": "lower-learning-rate",
+      "description": "Проверить сходимость при learning rate 3e-4 и архитектуре baseline",
+      "model": {"n_layer": 4},
+      "learning_rate": 0.0003
+    }
+  ]
+}

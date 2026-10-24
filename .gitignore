@@ -34,3 +34,5 @@ htmlcov/
 *.log
 logs/
 data/
+notebooks/
+artifacts/

@@ -19,7 +19,7 @@ web = [
     "uvicorn>=0.54.0",
 ]
 dev = [
-    {include-group = "tracking"},
+    {include-group = "training"},
     "httpx2>=2.13.1",
     "pre-commit>=4.6.2",
     "pytest>=9.1.1",
@@ -32,6 +32,19 @@ tracking = [
     "pandas>=3.1.0",
     "psycopg2-binary>=2.9.13",
 ]
+training = [
+    {include-group = "tracking"},
+    "matplotlib>=3.11.2",
+    "torch>=2.14.1",
+]
+
+[tool.uv.sources]
+torch = {index = "pytorch-cpu"}
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 target-version = "py313"
