@@ -20,6 +20,7 @@ web = [
 ]
 dev = [
     {include-group = "training"},
+    {include-group = "pipeline"},
     "httpx2>=2.13.1",
     "pre-commit>=4.6.2",
     "pytest>=9.1.1",
@@ -36,6 +37,9 @@ training = [
     {include-group = "tracking"},
     "matplotlib>=3.11.2",
     "torch>=2.14.1",
+]
+pipeline = [
+    "faststream[rabbit]>=0.6,<0.7",
 ]
 
 [tool.uv.sources]

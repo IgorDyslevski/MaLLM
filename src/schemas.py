@@ -171,9 +171,26 @@ class GenerationResult(BaseModel):
     text: str
 
 
+class InferenceTask(BaseModel):
+    task_id: str = Field(min_length=1)
+    request: GenerationRequest
+
+
+class BatchResult(BaseModel):
+    run_id: str = Field(min_length=1)
+    published: int = Field(ge=0)
+    elapsed_seconds: float = Field(ge=0)
+
+
 class InferenceErrorResponse(BaseModel):
     status: Literal["inference_error"] = "inference_error"
     message: str = "Model inference failed"
+
+
+class TaskResult(BaseModel):
+    task_id: str = Field(min_length=1)
+    outcome: GenerationResult | InferenceErrorResponse
+    processing_seconds: float = Field(ge=0)
 
 
 class RegistryConfig(BaseModel):
