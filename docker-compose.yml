@@ -1,4 +1,18 @@
 services:
+  rabbitmq:
+    image: rabbitmq:4.1-management-alpine
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -142,6 +156,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  rabbitmq-data:
   postgres-data:
   mlflow-postgres-data:
   mlflow-artifacts:
