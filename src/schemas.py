@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -50,6 +50,10 @@ class DatasetTrackingResult(BaseModel):
     experiment_id: str
     dataset_digest: str
     artifact_uri: str
+
+
+class OperationDistribution(BaseModel):
+    shares: dict[str, Annotated[float, Field(ge=0, le=100)]] = Field(min_length=1)
 
 
 class TransformerConfig(BaseModel):
