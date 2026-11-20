@@ -1,4 +1,5 @@
 from pathlib import Path
+from time import time
 from typing import Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
@@ -171,9 +172,14 @@ class GenerationResult(BaseModel):
     text: str
 
 
+class TaskAccepted(BaseModel):
+    task_id: str
+
+
 class InferenceTask(BaseModel):
     task_id: str = Field(min_length=1)
     request: GenerationRequest
+    submitted_at: float = Field(default_factory=time, gt=0)
 
 
 class BatchResult(BaseModel):
@@ -182,14 +188,9 @@ class BatchResult(BaseModel):
     elapsed_seconds: float = Field(ge=0)
 
 
-class InferenceErrorResponse(BaseModel):
-    status: Literal["inference_error"] = "inference_error"
-    message: str = "Model inference failed"
-
-
 class TaskResult(BaseModel):
     task_id: str = Field(min_length=1)
-    outcome: GenerationResult | InferenceErrorResponse
+    outcome: GenerationResult
     processing_seconds: float = Field(ge=0)
 
 

@@ -41,22 +41,23 @@ services:
   app:
     build: .
     environment:
-      DATABASE__HOST: postgres
-      DATABASE__USERNAME: ${POSTGRES_USER:-postgres}
-      DATABASE__PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      DATABASE__DATABASE_NAME: ${POSTGRES_DB:-mallm}
-      LOG_LEVEL: INFO
-      INFERENCE__TRACKING_URI: http://mlflow:5000
-      INFERENCE__MODEL_URI: ${MLFLOW_MODEL_URI:-models:/MaLLM@champion}
-      MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR: "false"
-      MLFLOW_DISABLE_AGENT_HINT: "true"
-      OMP_NUM_THREADS: "1"
+      - PIPELINE_RABBIT_URL=amqp://guest:guest@rabbitmq:5672/
+      - PIPELINE_QUEUE=${PIPELINE_QUEUE:-mallm.inference}
+      - PIPELINE_QUEUE_CAPACITY=${PIPELINE_QUEUE_CAPACITY:-50}
+      - PIPELINE_PREFETCH_COUNT=${PIPELINE_PREFETCH_COUNT:-1}
+      - PIPELINE_INFERENCE_SECONDS=${PIPELINE_INFERENCE_SECONDS:-0.2}
+      - PIPELINE_RETRY_SECONDS=${PIPELINE_RETRY_SECONDS:-0.1}
+      - DATABASE__HOST=postgres
+      - DATABASE__USERNAME=${POSTGRES_USER:-postgres}
+      - DATABASE__PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      - DATABASE__DATABASE_NAME=${POSTGRES_DB:-mallm}
+      - LOG_LEVEL=INFO
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
-      mlflow:
+      rabbitmq:
         condition: service_healthy
     logging:
       driver: json-file
@@ -64,6 +65,56 @@ services:
         max-size: "10m"
         max-file: "3"
     restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      target: runtime
+    command: ["python", "-m", "src.inference_worker"]
+    stop_grace_period: 2m
+    environment:
+      - PIPELINE_RABBIT_URL=amqp://guest:guest@rabbitmq:5672/
+      - PIPELINE_QUEUE=${PIPELINE_QUEUE:-mallm.inference}
+      - PIPELINE_QUEUE_CAPACITY=${PIPELINE_QUEUE_CAPACITY:-50}
+      - PIPELINE_PREFETCH_COUNT=${PIPELINE_PREFETCH_COUNT:-1}
+      - PIPELINE_INFERENCE_SECONDS=${PIPELINE_INFERENCE_SECONDS:-0.2}
+      - PIPELINE_RETRY_SECONDS=${PIPELINE_RETRY_SECONDS:-0.1}
+      - DATABASE__HOST=postgres
+      - DATABASE__USERNAME=${POSTGRES_USER:-postgres}
+      - DATABASE__PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      - DATABASE__DATABASE_NAME=${POSTGRES_DB:-mallm}
+      - LOG_LEVEL=INFO
+      - MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR=false
+      - MLFLOW_DISABLE_AGENT_HINT=true
+      - OMP_NUM_THREADS=1
+      - PIPELINE_TRACKING_URI=http://mlflow:5000
+      - PIPELINE_MODEL_URI=${MLFLOW_MODEL_URI:-models:/MaLLM@champion}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+
+  source:
+    build:
+      context: .
+      target: runtime
+    profiles: ["batch"]
+    command: ["python", "-m", "src.batch_source", "--input", "/inputs/generation.jsonl"]
+    environment:
+      - PIPELINE_RABBIT_URL=amqp://guest:guest@rabbitmq:5672/
+      - PIPELINE_QUEUE=${PIPELINE_QUEUE:-mallm.inference}
+      - PIPELINE_QUEUE_CAPACITY=${PIPELINE_QUEUE_CAPACITY:-50}
+      - PIPELINE_PREFETCH_COUNT=${PIPELINE_PREFETCH_COUNT:-1}
+      - PIPELINE_INFERENCE_SECONDS=${PIPELINE_INFERENCE_SECONDS:-0.2}
+      - PIPELINE_RETRY_SECONDS=${PIPELINE_RETRY_SECONDS:-0.1}
+    volumes:
+      - ./examples:/inputs:ro
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 
   mlflow-postgres:
     image: postgres:16-alpine

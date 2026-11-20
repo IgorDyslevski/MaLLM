@@ -1,15 +1,16 @@
 import os
-from unittest.mock import Mock
+from unittest.mock import AsyncMock
 
 import pytest
-from mlflow.pyfunc import PyFuncModel
+from faststream.rabbit import RabbitBroker
 
 os.environ.setdefault("DATABASE__USERNAME", "test-user")
 os.environ.setdefault("DATABASE__PASSWORD", "test-password")
 
 
 @pytest.fixture(autouse=True)
-def inference_loader(monkeypatch: pytest.MonkeyPatch) -> Mock:
-    loader = Mock(return_value=Mock(spec=PyFuncModel))
-    monkeypatch.setattr("src.app.load_registered_model", loader)
-    return loader
+def api_broker(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    broker = AsyncMock(spec=RabbitBroker)
+    broker.__aenter__.return_value = broker
+    monkeypatch.setattr("src.app.create_broker", lambda settings: broker)
+    return broker

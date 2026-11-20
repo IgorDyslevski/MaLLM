@@ -1,34 +1,32 @@
 import asyncio
 import threading
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pandas as pd
 import pytest
 from aio_pika.exceptions import DeliveryError
 from faststream.rabbit import RabbitBroker, TestRabbitBroker
+from faststream.rabbit.message import RabbitMessage
 from mlflow.pyfunc import PyFuncModel
 from mlflow.tracking import MlflowClient
 from pamqp.commands import Basic
+from psycopg import OperationalError
 from pydantic import ValidationError
 
-from src.config import PipelineSettings
+from src.config import PipelineSettings, Settings
+from src.exceptions import InferenceError
 from src.schemas import (
     GenerationRequest,
     GenerationResult,
-    InferenceErrorResponse,
     InferenceTask,
-    TaskResult,
 )
 from src.services.pipeline import (
-    append_result,
-    create_worker,
-    execute_task,
-    initialize_worker,
     publish_file,
     publish_task,
     task_queue,
 )
+from src.services.worker import create_worker, execute_task, initialize_worker
 
 
 def test_pipeline_settings_require_model_alias() -> None:
@@ -152,74 +150,53 @@ def test_execute_task_runs_real_prediction_outside_event_loop() -> None:
     assert worker_threads and worker_threads[0] != caller_thread
 
 
-def test_execute_task_sleeps_only_remaining_duration(
+@pytest.mark.parametrize(
+    "prediction_end,finished,delay",
+    [
+        pytest.param(10.3, 11.0, 0.7, id="fast-model-waits"),
+        pytest.param(12.0, 12.0, 0.0, id="slow-model-needs-no-delay"),
+    ],
+)
+def test_execute_task_waits_only_for_remaining_duration(
     monkeypatch: pytest.MonkeyPatch,
+    prediction_end: float,
+    finished: float,
+    delay: float,
 ) -> None:
-    monkeypatch.setattr(
-        "src.services.pipeline.monotonic", Mock(side_effect=[10.0, 10.3, 11.0])
-    )
+    clock = Mock(side_effect=[10.0, prediction_end, finished])
+    monkeypatch.setattr("src.services.worker.monotonic", clock)
     sleep = AsyncMock()
-    monkeypatch.setattr("src.services.pipeline.asyncio.sleep", sleep)
+    monkeypatch.setattr("src.services.worker.asyncio.sleep", sleep)
     model = Mock(spec=PyFuncModel)
     model.predict.return_value = pd.DataFrame([{"text": "b"}])
     task = InferenceTask(task_id="batch:1", request=GenerationRequest(prompt="a"))
     result = asyncio.run(execute_task(task, model, 1.0))
-    sleep.assert_awaited_once()
-    assert sleep.await_args.args[0] == pytest.approx(0.7)
-    assert result.processing_seconds == 1.0
+    sleep.assert_awaited_once_with(pytest.approx(delay, rel=1e-6, abs=0))
+    assert result.processing_seconds == finished - 10.0
 
 
-def test_execute_task_does_not_add_delay_when_inference_exceeds_duration(
+def test_execute_task_propagates_inference_error() -> None:
+    model = Mock(spec=PyFuncModel)
+    model.predict.side_effect = RuntimeError("failed")
+    task = InferenceTask(task_id="batch:1", request=GenerationRequest(prompt="a"))
+    with pytest.raises(InferenceError):
+        asyncio.run(execute_task(task, model, 0.001))
+
+
+def test_worker_loads_alias_once_and_saves_two_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "src.services.pipeline.monotonic", Mock(side_effect=[10.0, 12.0, 12.0])
-    )
-    sleep = AsyncMock()
-    monkeypatch.setattr("src.services.pipeline.asyncio.sleep", sleep)
-    model = Mock(spec=PyFuncModel)
-    model.predict.return_value = pd.DataFrame([{"text": "b"}])
-    task = InferenceTask(task_id="batch:1", request=GenerationRequest(prompt="a"))
-    asyncio.run(execute_task(task, model, 1.0))
-    sleep.assert_awaited_once_with(0)
-
-
-def test_execute_task_returns_stable_error_without_technical_details() -> None:
-    model = Mock(spec=PyFuncModel)
-    model.predict.side_effect = RuntimeError("secret model path")
-    task = InferenceTask(task_id="batch:1", request=GenerationRequest(prompt="a"))
-    result = asyncio.run(execute_task(task, model, 0.001))
-    assert result.outcome == InferenceErrorResponse()
-    assert "secret" not in result.model_dump_json()
-
-
-def test_append_result_keeps_previous_results(tmp_path: Path) -> None:
-    destination = tmp_path / "results.jsonl"
-    result = TaskResult(
-        task_id="batch:1", outcome=GenerationResult(text="b"), processing_seconds=1
-    )
-    append_result(destination, result)
-    append_result(destination, result)
-    assert [
-        TaskResult.model_validate_json(line)
-        for line in destination.read_text().splitlines()
-    ] == [result, result]
-
-
-def test_worker_loads_alias_once_and_reuses_model_for_multiple_tasks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
     settings = PipelineSettings(inference_seconds=0.001, _env_file=None)
-    client = Mock(spec=MlflowClient)
     model = Mock(spec=PyFuncModel)
     model.predict.return_value = pd.DataFrame([{"text": "b"}])
     loader = Mock(return_value=model)
-    monkeypatch.setattr("src.services.pipeline.load_registered_model", loader)
-    destination = tmp_path / "nested" / "results.jsonl"
+    save = AsyncMock()
+    monkeypatch.setattr("src.services.worker.load_registered_model", loader)
+    monkeypatch.setattr("src.services.worker.save_result", save)
+    client = Mock(spec=MlflowClient)
 
     async def scenario() -> None:
-        app = await initialize_worker(settings, client, destination)
-        loader.assert_called_once_with(client, settings.model_uri)
+        app = await initialize_worker(settings, client, Settings().database)
         async with TestRabbitBroker(app.broker) as broker:
             for number in range(2):
                 await broker.publish(
@@ -230,47 +207,95 @@ def test_worker_loads_alias_once_and_reuses_model_for_multiple_tasks(
                 )
 
     asyncio.run(scenario())
-    loader.assert_called_once()
+    loader.assert_called_once_with(client, settings.model_uri)
     assert model.predict.call_count == 2
-    results = [
-        TaskResult.model_validate_json(line)
-        for line in destination.read_text().splitlines()
+    assert [call.args[1].task_id for call in save.await_args_list] == [
+        "batch:0",
+        "batch:1",
     ]
-    assert [result.task_id for result in results] == ["batch:0", "batch:1"]
 
 
 def test_worker_startup_fails_before_consuming_when_model_unavailable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loader = Mock(side_effect=RuntimeError("registry unavailable"))
-    monkeypatch.setattr("src.services.pipeline.load_registered_model", loader)
-    destination = tmp_path / "results.jsonl"
+    create = Mock()
+    monkeypatch.setattr("src.services.worker.load_registered_model", loader)
+    monkeypatch.setattr("src.services.worker.create_worker", create)
     with pytest.raises(RuntimeError, match="registry unavailable"):
-        asyncio.run(
-            initialize_worker(
-                PipelineSettings(_env_file=None), Mock(spec=MlflowClient), destination
-            )
-        )
-    assert not destination.exists()
+        asyncio.run(initialize_worker(PipelineSettings(), Mock(), Settings().database))
+    create.assert_not_called()
 
 
-def test_worker_propagates_result_storage_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_worker_requeues_delivery_when_result_cannot_be_saved(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = PipelineSettings(inference_seconds=0.001, _env_file=None)
+    database = Settings().database
     model = Mock(spec=PyFuncModel)
     model.predict.return_value = pd.DataFrame([{"text": "b"}])
-    monkeypatch.setattr(
-        "src.services.pipeline.append_result", Mock(side_effect=OSError("disk full"))
-    )
+    save = AsyncMock(side_effect=OperationalError("write failed"))
+    failures = AsyncMock(return_value=1)
+    monkeypatch.setattr("src.services.worker.save_result", save)
+    monkeypatch.setattr("src.services.worker.record_failure", failures)
+    task = InferenceTask(task_id="batch:1", request=GenerationRequest(prompt="a"))
 
     async def scenario() -> None:
-        app = create_worker(settings, model, tmp_path / "results.jsonl")
+        app = create_worker(settings, model, database)
         async with TestRabbitBroker(app.broker) as broker:
             await broker.publish(
-                InferenceTask(task_id="batch:1", request=GenerationRequest(prompt="a")),
-                queue=task_queue(settings),
+                task, queue=task_queue(settings), message_id=task.task_id
             )
 
-    with pytest.raises(OSError, match="disk full"):
+    with patch.object(
+        RabbitMessage, "nack", autospec=True, side_effect=RabbitMessage.nack
+    ) as nack:
         asyncio.run(scenario())
+    save.assert_awaited_once()
+    failures.assert_awaited_once_with(database, task.task_id)
+    nack.assert_awaited_once()
+    assert nack.await_args.kwargs == {"requeue": True}
+
+
+def test_poison_message_after_max_attempts_goes_to_dlq(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = PipelineSettings(_env_file=None)
+    monkeypatch.setattr("src.services.worker.record_failure", AsyncMock(return_value=3))
+    app = create_worker(settings, Mock(), Settings().database)
+    received = []
+
+    @app.broker.subscriber(f"{settings.queue}.dlq")
+    async def inspect(body: bytes) -> None:
+        received.append(body)
+
+    async def scenario() -> None:
+        async with TestRabbitBroker(app.broker) as broker:
+            await broker.publish(b"broken", queue=task_queue(settings))
+
+    asyncio.run(scenario())
+    assert received == [b"broken"]
+
+
+def test_event_loop_remains_responsive_during_prediction() -> None:
+    model = Mock(spec=PyFuncModel)
+    release = threading.Event()
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        entered = asyncio.Event()
+
+        def predict(frame: pd.DataFrame) -> pd.DataFrame:
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(2), "event loop blocked inside model.predict"
+            return pd.DataFrame([{"text": "ok"}])
+
+        model.predict.side_effect = predict
+        task = InferenceTask(task_id="loop:1", request=GenerationRequest(prompt="a"))
+        work = asyncio.create_task(execute_task(task, model, 0.001))
+        await asyncio.wait_for(entered.wait(), 2)
+        assert not work.done()
+        release.set()
+        assert (await work).outcome.text == "ok"
+
+    asyncio.run(scenario())

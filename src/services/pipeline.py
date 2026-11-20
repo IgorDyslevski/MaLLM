@@ -1,75 +1,80 @@
 import asyncio
-import logging
+from collections.abc import Callable
 from pathlib import Path
 from time import monotonic
 
 from aio_pika.exceptions import DeliveryError
-from faststream import AckPolicy, FastStream
 from faststream.rabbit import Channel, RabbitBroker, RabbitQueue
-from mlflow.pyfunc import PyFuncModel
-from mlflow.tracking import MlflowClient
 from pamqp.commands import Basic
 
 from src.config import PipelineSettings
-from src.exceptions import InferenceError
-from src.schemas import (
-    BatchResult,
-    GenerationRequest,
-    GenerationResult,
-    InferenceErrorResponse,
-    InferenceTask,
-    TaskResult,
-)
-from src.services.inference import process
-from src.services.model_registry import load_registered_model
+from src.schemas import BatchResult, GenerationRequest, InferenceTask
+
+PUBLISH_TIMEOUT_SECONDS = 2.0
+
+
+class QueueFullError(Exception):
+    """Брокер отклонил публикацию в заполненную очередь."""
 
 
 def task_queue(settings: PipelineSettings) -> RabbitQueue:
-    """Описать ограниченную очередь без удаления старых задач."""
-    return RabbitQueue(
-        settings.queue,
-        durable=True,
-        arguments={
-            "x-max-length": settings.queue_capacity,
-            "x-overflow": "reject-publish",
-        },
-    )
+    arguments: dict[str, str | int] = {"x-queue-type": "classic"}
+    if settings.queue_capacity is not None:
+        arguments.update(
+            {"x-max-length": settings.queue_capacity, "x-overflow": "reject-publish"}
+        )
+    return RabbitQueue(settings.queue, durable=True, arguments=arguments)
 
 
 def create_broker(settings: PipelineSettings) -> RabbitBroker:
-    """Создать брокер с подтверждением публикаций и одной задачей в работе."""
     return RabbitBroker(
         settings.rabbit_url,
         timeout=10,
+        graceful_timeout=max(60, settings.inference_seconds + 30),
         default_channel=Channel(
-            prefetch_count=1, publisher_confirms=True, on_return_raises=True
+            prefetch_count=settings.prefetch_count,
+            publisher_confirms=True,
+            on_return_raises=True,
         ),
     )
+
+
+async def publish_once(
+    task: InferenceTask, broker: RabbitBroker, settings: PipelineSettings
+) -> None:
+    try:
+        await broker.publish(
+            task,
+            queue=task_queue(settings),
+            persist=True,
+            mandatory=True,
+            timeout=PUBLISH_TIMEOUT_SECONDS,
+            message_id=task.task_id,
+            correlation_id=task.task_id,
+        )
+    except DeliveryError as exc:
+        if isinstance(exc.frame, Basic.Nack):
+            raise QueueFullError from exc
+        raise RuntimeError("RabbitMQ could not route the task") from exc
 
 
 async def publish_task(
     task: InferenceTask, broker: RabbitBroker, settings: PipelineSettings
 ) -> None:
-    """Дождаться приёма задачи, при переполнении повторить текущую публикацию."""
     while True:
         try:
-            await broker.publish(
-                task,
-                queue=task_queue(settings),
-                persist=True,
-                message_id=task.task_id,
-                correlation_id=task.task_id,
-            )
-        except DeliveryError as exc:
-            if not isinstance(exc.frame, Basic.Nack):
-                raise RuntimeError("RabbitMQ could not route the task") from exc
-            await asyncio.sleep(settings.retry_seconds)
-        else:
+            await publish_once(task, broker, settings)
             return
+        except QueueFullError:
+            await asyncio.sleep(settings.retry_seconds)
 
 
 async def publish_file(
-    source: Path, run_id: str, broker: RabbitBroker, settings: PipelineSettings
+    source: Path,
+    run_id: str,
+    broker: RabbitBroker,
+    settings: PipelineSettings,
+    on_confirm: Callable[[int], None] | None = None,
 ) -> BatchResult:
     """Опубликовать JSONL построчно без накопления задач в памяти."""
     started = monotonic()
@@ -81,64 +86,10 @@ async def publish_file(
             task = InferenceTask(task_id=f"{run_id}:{line_number}", request=request)
             await publish_task(task, broker, settings)
             published += 1
-            await asyncio.sleep(settings.source_interval_seconds)
+            if on_confirm is not None:
+                on_confirm(published)
+            if settings.source_interval_seconds:
+                await asyncio.sleep(settings.source_interval_seconds)
     return BatchResult(
         run_id=run_id, published=published, elapsed_seconds=monotonic() - started
     )
-
-
-async def execute_task(
-    task: InferenceTask, model: PyFuncModel, inference_seconds: float
-) -> TaskResult:
-    """Выполнить inference за время не меньше заданной длительности."""
-    started = monotonic()
-    outcome: GenerationResult | InferenceErrorResponse
-    try:
-        outcome = await asyncio.to_thread(process, task.request, model)
-    except InferenceError as exc:
-        logging.getLogger(__name__).exception(
-            "Inference failed task_id=%s", task.task_id, exc_info=exc
-        )
-        outcome = InferenceErrorResponse()
-    await asyncio.sleep(max(0, inference_seconds - (monotonic() - started)))
-    return TaskResult(
-        task_id=task.task_id,
-        outcome=outcome,
-        processing_seconds=monotonic() - started,
-    )
-
-
-def append_result(destination: Path, result: TaskResult) -> None:
-    """Сохранить результат перед подтверждением задачи."""
-    with destination.open("a", encoding="utf-8") as results:
-        results.write(result.model_dump_json() + "\n")
-
-
-def create_worker(
-    settings: PipelineSettings, model: PyFuncModel, destination: Path
-) -> FastStream:
-    """Собрать воркер с уже загруженной моделью и сохранением результатов."""
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    broker = create_broker(settings)
-
-    @broker.subscriber(
-        task_queue(settings), ack_policy=AckPolicy.NACK_ON_ERROR, no_reply=True
-    )
-    async def handle(task: InferenceTask) -> None:
-        result = await execute_task(task, model, settings.inference_seconds)
-        await asyncio.to_thread(append_result, destination, result)
-        logging.getLogger(__name__).info(
-            "Task completed task_id=%s processing_seconds=%.3f",
-            task.task_id,
-            result.processing_seconds,
-        )
-
-    return FastStream(broker)
-
-
-async def initialize_worker(
-    settings: PipelineSettings, client: MlflowClient, destination: Path
-) -> FastStream:
-    """Однократно загрузить модель по alias до подключения потребителя."""
-    model = await asyncio.to_thread(load_registered_model, client, settings.model_uri)
-    return create_worker(settings, model, destination)

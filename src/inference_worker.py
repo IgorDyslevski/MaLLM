@@ -1,37 +1,25 @@
-import argparse
 import asyncio
 import os
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 from mlflow.tracking import MlflowClient
 
-from src.config import PipelineSettings
+from src.config import PipelineSettings, Settings
 from src.logs import setup_logging
-from src.services.pipeline import initialize_worker
+from src.services.worker import INFERENCE_SLOTS, initialize_worker
 
 
-async def run(settings: PipelineSettings, destination: Path) -> None:
-    """Загрузить модель один раз и запустить обработку очереди."""
+async def run(settings: PipelineSettings) -> None:
     client = MlflowClient(
         tracking_uri=settings.tracking_uri, registry_uri=settings.tracking_uri
     )
-    worker = await initialize_worker(settings, client, destination)
-    await worker.run()
-
-
-def main() -> None:
-    """Запустить воркер inference для зарегистрированной модели."""
-    parser = argparse.ArgumentParser(
-        description="Consume generation tasks from RabbitMQ"
-    )
-    parser.add_argument(
-        "--output", type=Path, default=Path("artifacts/pipeline/results.jsonl")
-    )
-    args = parser.parse_args()
-    os.environ.setdefault("MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD", "false")
-    setup_logging("INFO")
-    asyncio.run(run(PipelineSettings(), args.output))
+    with ThreadPoolExecutor(max_workers=INFERENCE_SLOTS) as pool:
+        asyncio.get_running_loop().set_default_executor(pool)
+        worker = await initialize_worker(settings, client, Settings().database)
+        await worker.run()
 
 
 if __name__ == "__main__":
-    main()
+    os.environ.setdefault("MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD", "false")
+    setup_logging("INFO")
+    asyncio.run(run(PipelineSettings()))

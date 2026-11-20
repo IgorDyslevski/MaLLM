@@ -11,7 +11,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-default-groups --group web --group training
 
-FROM python:3.13-slim
+FROM python:3.13-slim AS runtime
 
 ENV TZ=Europe/Moscow \
     PATH="/app/.venv/bin:$PATH" \
@@ -26,6 +26,8 @@ COPY pyproject.toml ./
 COPY src/ ./src/
 
 USER appuser
+
+FROM runtime AS api
 
 EXPOSE 8000
 

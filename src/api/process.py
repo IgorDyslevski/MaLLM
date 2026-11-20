@@ -1,23 +1,55 @@
-from typing import Annotated, cast
+import asyncio
+from math import ceil
+from typing import Annotated
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Request
-from mlflow.pyfunc import PyFuncModel
-from starlette.concurrency import run_in_threadpool
+from aio_pika.exceptions import AMQPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from faststream.rabbit import RabbitBroker
 
-from src.schemas import GenerationRequest, GenerationResult, InferenceErrorResponse
-from src.services.inference import process
+from src.config import PipelineSettings
+from src.schemas import GenerationRequest, InferenceTask, TaskAccepted
+from src.services.pipeline import PUBLISH_TIMEOUT_SECONDS, QueueFullError, publish_once
 
 process_router = APIRouter(tags=["Inference"])
 
 
-def loaded_model(request: Request) -> PyFuncModel:
-    """Вернуть модель, загруженную при старте приложения."""
-    return cast(PyFuncModel, request.state.model)
+def current_broker(request: Request) -> RabbitBroker:
+    return request.state.broker
 
 
-@process_router.post("/process", responses={503: {"model": InferenceErrorResponse}})
-async def process_text(
+def current_pipeline(request: Request) -> PipelineSettings:
+    return request.state.pipeline
+
+
+@process_router.post(
+    "/api/v1/tasks",
+    status_code=202,
+    responses={
+        503: {
+            "description": "Очередь переполнена или брокер недоступен",
+            "headers": {
+                "Retry-After": {
+                    "description": "Пауза в секундах",
+                    "schema": {"type": "integer"},
+                }
+            },
+        }
+    },
+)
+async def submit_task(
     request: GenerationRequest,
-    model: Annotated[PyFuncModel, Depends(loaded_model)],
-) -> GenerationResult:
-    return await run_in_threadpool(process, request, model)
+    broker: Annotated[RabbitBroker, Depends(current_broker)],
+    settings: Annotated[PipelineSettings, Depends(current_pipeline)],
+) -> TaskAccepted:
+    task = InferenceTask(task_id=uuid4().hex, request=request)
+    try:
+        async with asyncio.timeout(PUBLISH_TIMEOUT_SECONDS):
+            await publish_once(task, broker, settings)
+    except (QueueFullError, AMQPException, OSError, RuntimeError) as exc:
+        raise HTTPException(
+            503,
+            detail="Task queue unavailable",
+            headers={"Retry-After": str(ceil(settings.inference_seconds))},
+        ) from exc
+    return TaskAccepted(task_id=task.task_id)
