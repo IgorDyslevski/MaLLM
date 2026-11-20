@@ -1,3 +1,8 @@
+name: mallm
+
+include:
+  - observability/compose.yaml
+
 services:
   rabbitmq:
     image: rabbitmq:4.1-management-alpine
@@ -51,7 +56,8 @@ services:
       - DATABASE__USERNAME=${POSTGRES_USER:-postgres}
       - DATABASE__PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       - DATABASE__DATABASE_NAME=${POSTGRES_DB:-mallm}
-      - LOG_LEVEL=INFO
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     ports:
       - "8000:8000"
     depends_on:
@@ -83,7 +89,8 @@ services:
       - DATABASE__USERNAME=${POSTGRES_USER:-postgres}
       - DATABASE__PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       - DATABASE__DATABASE_NAME=${POSTGRES_DB:-mallm}
-      - LOG_LEVEL=INFO
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
       - MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR=false
       - MLFLOW_DISABLE_AGENT_HINT=true
       - OMP_NUM_THREADS=1
@@ -104,6 +111,8 @@ services:
     profiles: ["batch"]
     command: ["python", "-m", "src.batch_source", "--input", "/inputs/generation.jsonl"]
     environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
       - PIPELINE_RABBIT_URL=amqp://guest:guest@rabbitmq:5672/
       - PIPELINE_QUEUE=${PIPELINE_QUEUE:-mallm.inference}
       - PIPELINE_QUEUE_CAPACITY=${PIPELINE_QUEUE_CAPACITY:-50}

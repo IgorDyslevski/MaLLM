@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from time import monotonic
@@ -8,9 +9,11 @@ from faststream.rabbit import Channel, RabbitBroker, RabbitQueue
 from pamqp.commands import Basic
 
 from src.config import PipelineSettings
+from src.logs import task_context
 from src.schemas import BatchResult, GenerationRequest, InferenceTask
 
 PUBLISH_TIMEOUT_SECONDS = 2.0
+logger = logging.getLogger(__name__)
 
 
 class QueueFullError(Exception):
@@ -29,6 +32,7 @@ def task_queue(settings: PipelineSettings) -> RabbitQueue:
 def create_broker(settings: PipelineSettings) -> RabbitBroker:
     return RabbitBroker(
         settings.rabbit_url,
+        logger=logging.getLogger("faststream.rabbit"),
         timeout=10,
         graceful_timeout=max(60, settings.inference_seconds + 30),
         default_channel=Channel(
@@ -54,6 +58,12 @@ async def publish_once(
         )
     except DeliveryError as exc:
         if isinstance(exc.frame, Basic.Nack):
+            logger.warning(
+                "Broker rejected publication",
+                extra={
+                    "fields": {"event": "publish_rejected", "queue": settings.queue}
+                },
+            )
             raise QueueFullError from exc
         raise RuntimeError("RabbitMQ could not route the task") from exc
 
@@ -66,6 +76,15 @@ async def publish_task(
             await publish_once(task, broker, settings)
             return
         except QueueFullError:
+            logger.warning(
+                "Source waiting for queue capacity",
+                extra={
+                    "fields": {
+                        "event": "source_backpressure",
+                        "retry_seconds": settings.retry_seconds,
+                    }
+                },
+            )
             await asyncio.sleep(settings.retry_seconds)
 
 
@@ -84,7 +103,15 @@ async def publish_file(
         for line_number, line in enumerate(records, start=1):
             request = GenerationRequest.model_validate_json(line)
             task = InferenceTask(task_id=f"{run_id}:{line_number}", request=request)
-            await publish_task(task, broker, settings)
+            with task_context(task.task_id):
+                logger.info(
+                    "Publishing task", extra={"fields": {"event": "task_publishing"}}
+                )
+                await publish_task(task, broker, settings)
+                logger.info(
+                    "Task publication confirmed",
+                    extra={"fields": {"event": "task_published"}},
+                )
             published += 1
             if on_confirm is not None:
                 on_confirm(published)

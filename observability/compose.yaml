@@ -1,0 +1,39 @@
+services:
+  loki:
+    image: grafana/loki:${LOKI_VERSION:-3.7.0}
+    profiles: [logs]
+    command: ["-config.file=/etc/loki/config.yaml"]
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./loki.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    mem_limit: 384m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+  alloy:
+    image: grafana/alloy:${ALLOY_VERSION:-v1.11.3}
+    profiles: [logs]
+    command:
+      - run
+      - --storage.path=/var/lib/alloy
+      - /etc/alloy/config.alloy
+    environment:
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-mallm}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./log-agent/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy
+    mem_limit: 128m
+    depends_on:
+      loki:
+        condition: service_healthy
+
+volumes:
+  loki-data:
+  alloy-data:

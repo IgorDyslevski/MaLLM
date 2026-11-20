@@ -1,4 +1,5 @@
 import json
+import logging
 import tempfile
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -23,6 +24,8 @@ from src.schemas import (
 )
 from src.services.inference import process
 from src.services.registered_model import RegisteredLanguageModel
+
+logger = logging.getLogger(__name__)
 
 
 def package_model(
@@ -121,6 +124,10 @@ def load_registered_model(client: MlflowClient, model_uri: str) -> PyFuncModel:
     """Загрузить модель по версии или alias через заданный MLflow-клиент."""
     if not model_uri.startswith("models:/"):
         raise ValueError("Ожидается URI models:/name/version или models:/name@alias")
+    logger.info(
+        "Loading registered model",
+        extra={"fields": {"event": "model_loading", "model_uri": model_uri}},
+    )
     selection = model_uri.removeprefix("models:/")
     if "@" in selection:
         name, alias = selection.split("@", 1)
@@ -135,7 +142,18 @@ def load_registered_model(client: MlflowClient, model_uri: str) -> PyFuncModel:
             tracking_uri=client.tracking_uri,
             registry_uri=client.tracking_uri,
         )
-        return mlflow.pyfunc.load_model(local)
+        model = mlflow.pyfunc.load_model(local)
+    logger.info(
+        "Registered model loaded",
+        extra={
+            "fields": {
+                "event": "model_loaded",
+                "model_uri": model_uri,
+                "model_version": version,
+            }
+        },
+    )
+    return model
 
 
 def predict_registered_model(

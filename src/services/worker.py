@@ -10,6 +10,7 @@ from mlflow.tracking import MlflowClient
 from psycopg import Error as DatabaseError
 
 from src.config import DatabaseSettings, PipelineSettings
+from src.logs import task_context
 from src.schemas import InferenceTask, TaskResult
 from src.services.inference import process
 from src.services.model_registry import load_registered_model
@@ -41,7 +42,7 @@ def create_worker(
     settings: PipelineSettings, model: PyFuncModel, database: DatabaseSettings
 ) -> FastStream:
     broker = create_broker(settings)
-    app = FastStream(broker)
+    app = FastStream(broker, logger=logging.getLogger("faststream"))
     dlq = RabbitQueue(f"{settings.queue}.dlq", durable=True)
 
     @app.on_startup
@@ -50,14 +51,30 @@ def create_worker(
         await broker.connect()
         await broker.declare_queue(dlq)
 
+    @app.on_shutdown
+    async def shutdown_started() -> None:
+        logger.info(
+            "Graceful shutdown started", extra={"fields": {"event": "shutdown_started"}}
+        )
+
+    @app.after_shutdown
+    async def shutdown_completed() -> None:
+        logger.info(
+            "Graceful shutdown completed",
+            extra={"fields": {"event": "shutdown_completed"}},
+        )
+
     slots = asyncio.Semaphore(INFERENCE_SLOTS)
 
     async def process_delivery(body: bytes) -> None:
         task = InferenceTask.model_validate_json(body)
+        logger.info(
+            "Task processing started", extra={"fields": {"event": "task_started"}}
+        )
         async with slots:
             result = await execute_task(task, model, settings.inference_seconds)
             await save_result(database, result, task.submitted_at)
-        logger.info("Completed task_id=%s", task.task_id)
+        logger.info("Task completed", extra={"fields": {"event": "task_completed"}})
 
     @broker.subscriber(
         task_queue(settings),
@@ -66,19 +83,34 @@ def create_worker(
         no_reply=True,
     )
     async def handle(body: bytes, message: RabbitMessage) -> None:
+        key = message.raw_message.message_id or sha256(body).hexdigest()
+        with task_context(message.correlation_id or key):
+            await handle_delivery(body, message, key)
+
+    async def handle_delivery(body: bytes, message: RabbitMessage, key: str) -> None:
         try:
             await process_delivery(body)
-        except Exception as exc:  # noqa: BLE001 -- отказ одной доставки учитывается в БД
-            key = message.raw_message.message_id or sha256(body).hexdigest()
+        except Exception as exc:
             try:
                 attempts = await record_failure(database, key)
             except DatabaseError:
                 # Пока БД недоступна, доставка остаётся без подтверждения.
+                logger.exception(
+                    "Could not record failed delivery",
+                    extra={"fields": {"event": "failure_record_unavailable"}},
+                )
                 await asyncio.sleep(settings.retry_seconds)
                 raise
-            logger.warning("Failed message_id=%s attempt=%d", key, attempts)
+            logger.exception(
+                "Task processing failed",
+                extra={"fields": {"event": "task_failed", "attempt": attempts}},
+            )
             if attempts < MAX_ATTEMPTS:
                 await message.nack(requeue=True)
+                logger.warning(
+                    "Task requeued",
+                    extra={"fields": {"event": "task_requeued", "attempt": attempts}},
+                )
                 return
             # Сначала получить confirm от DLQ, затем вернуть управление для ack.
             await broker.publish(
@@ -91,6 +123,16 @@ def create_worker(
                 headers={"attempts": attempts, "error": type(exc).__name__},
                 content_type=message.content_type,
                 timeout=PUBLISH_TIMEOUT_SECONDS,
+            )
+            logger.error(
+                "Task moved to DLQ",
+                extra={
+                    "fields": {
+                        "event": "task_dlq",
+                        "attempt": attempts,
+                        "queue": dlq.name,
+                    }
+                },
             )
 
     return app

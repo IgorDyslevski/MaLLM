@@ -14,7 +14,7 @@ from src.services.version import get_version
 
 def create_app() -> FastAPI:
     settings = Settings()
-    setup_logging(settings.log_level)
+    setup_logging(settings.log_level, "api", settings.environment)
     version = get_version(Path(__file__).resolve().parents[1] / "pyproject.toml")
 
     @asynccontextmanager
