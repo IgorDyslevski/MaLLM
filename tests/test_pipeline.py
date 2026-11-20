@@ -1,4 +1,6 @@
 import asyncio
+import json
+import logging
 import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
@@ -16,6 +18,7 @@ from pydantic import ValidationError
 
 from src.config import PipelineSettings, Settings
 from src.exceptions import InferenceError
+from src.logs import setup_logging
 from src.schemas import (
     GenerationRequest,
     GenerationResult,
@@ -185,7 +188,9 @@ def test_execute_task_propagates_inference_error() -> None:
 
 def test_worker_loads_alias_once_and_saves_two_results(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    setup_logging("INFO", "worker")
     settings = PipelineSettings(inference_seconds=0.001, _env_file=None)
     model = Mock(spec=PyFuncModel)
     model.predict.return_value = pd.DataFrame([{"text": "b"}])
@@ -204,6 +209,8 @@ def test_worker_loads_alias_once_and_saves_two_results(
                         task_id=f"batch:{number}", request=GenerationRequest(prompt="a")
                     ),
                     queue=task_queue(settings),
+                    correlation_id=f"batch:{number}",
+                    message_id=f"batch:{number}",
                 )
 
     asyncio.run(scenario())
@@ -213,6 +220,10 @@ def test_worker_loads_alias_once_and_saves_two_results(
         "batch:0",
         "batch:1",
     ]
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    completed = [line for line in lines if line.get("event") == "task_completed"]
+    assert [line["task_id"] for line in completed] == ["batch:0", "batch:1"]
+    assert all(line["service"] == "worker" for line in completed)
 
 
 def test_worker_startup_fails_before_consuming_when_model_unavailable(
@@ -259,7 +270,9 @@ def test_worker_requeues_delivery_when_result_cannot_be_saved(
 
 def test_poison_message_after_max_attempts_goes_to_dlq(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    setup_logging("INFO", "worker")
     settings = PipelineSettings(_env_file=None)
     monkeypatch.setattr("src.services.worker.record_failure", AsyncMock(return_value=3))
     app = create_worker(settings, Mock(), Settings().database)
@@ -275,6 +288,34 @@ def test_poison_message_after_max_attempts_goes_to_dlq(
 
     asyncio.run(scenario())
     assert received == [b"broken"]
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    failed = next(line for line in lines if line.get("event") == "task_failed")
+    dead = next(line for line in lines if line.get("event") == "task_dlq")
+    assert failed["level"] == "ERROR"
+    assert failed["attempt"] == dead["attempt"] == 3
+    assert failed["task_id"] == dead["task_id"]
+    assert "ValidationError" in failed["exception"]
+    assert "input_value" not in failed["exception"]
+
+
+def test_worker_shutdown_events_surround_broker_stop(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    setup_logging("INFO", "worker")
+    app = create_worker(PipelineSettings(), Mock(), Settings().database)
+
+    async def stop_broker() -> None:
+        logging.getLogger(__name__).info("broker stopped")
+
+    monkeypatch.setattr(app.broker, "stop", stop_broker)
+    asyncio.run(app.stop())
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [line["message"] for line in lines] == [
+        "Graceful shutdown started",
+        "broker stopped",
+        "Graceful shutdown completed",
+    ]
 
 
 def test_event_loop_remains_responsive_during_prediction() -> None:
